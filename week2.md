@@ -21,3 +21,7 @@
 
 2. **Latency Optimization:**
    * Brainstorm and investigate architectural strategies to reduce time consumption and minimize the latency overhead introduced by relational database network round-trips.
+
+---
+### ⭐ AI-Assisted Development Statement
+All code in this repository was developed with AI assistance (leveraging models like Gemini and GPT). The system architecture, experimental design, prompt formulation, code integration, testing, result interpretation, and limitation analyses were entirely driven, directed, and validated by the author.

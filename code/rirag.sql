@@ -1,3 +1,6 @@
+/*
+@author: Laurie MAVOUNGOU, JK AI CEO, lmavoungou@outlook.be*/
+
 DROP DATABASE IF EXISTS RIRAG;
 
 CREATE DATABASE RIRAG;

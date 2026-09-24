@@ -1,7 +1,7 @@
 """Evaluates normal RAG against RI-RAG"""
 
 import sys
-from app import *
+from code.app import *
 import time
 
 # Disable Hugging Face symlink warning on Windows

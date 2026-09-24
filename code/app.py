@@ -1,6 +1,7 @@
 """
 This class present the hybridization of the concept of RAG with the concept of Relational Database.
 @conceptor: Laurie MAVOUNGOU, JK AI CEO, lmavoungou@outlook.be
+@assistant: Gemini
 """
 import os
 import chromadb

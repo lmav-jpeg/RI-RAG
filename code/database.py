@@ -17,7 +17,7 @@ class DatabaseManager:
       # Notice 'semantic_sumary' matches your SQL table column definition
       cursor.execute(
           """
-                SELECT file_id, file_name, content, semantic_sumary, grade, comments 
+                SELECT file_id, file_name, content, semantic_summary, grade, comments 
                 FROM file 
                 WHERE file_id = %s
             """,

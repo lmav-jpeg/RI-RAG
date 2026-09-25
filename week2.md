@@ -5,7 +5,7 @@
 
 1. **First RI-RAG Prototype & Memory Optimization:**
    * Successfully developed and validated the **RI-RAG** (Relational-Indexed Retrieval-Augmented Generation) prototype architecture.
-   * Achieved promising memory footprint results, recording a **6.8% reduction** in vector storage memory compared to the Standard RAG baseline by offloading heavy text payloads to the relational database[cite: 2].
+   * Achieved promising memory footprint results, recording a **6.8% reduction** in vector storage memory compared to the Standard RAG baseline by offloading heavy text payloads to the relational database.
 
 2. **Database Seed Generation (1,000 Entries):**
    * Generated with Gemini an SQL seed file containing **1,000 entries** to rigorously test system scaling.

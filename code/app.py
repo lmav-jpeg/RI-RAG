@@ -28,10 +28,7 @@ class HybridRIRAGSystem:
       self,
       file_id: str,
       file_name: str,
-      content: str,
       semantic_summary: str,
-      grade: float,
-      comments: str,
   ):
     """Indexes the semantic entry point in ChromaDB,
 
@@ -47,6 +44,26 @@ class HybridRIRAGSystem:
         metadatas=[{"file_name": file_name, "file_id": file_id}],
     )
     print(f"Vector Store: Indexed semantic entry point for [PK: {file_id}]")
+
+  def ingest_from_database(self):
+    """Automatically pulls all records from MySQL and syncs them
+
+    into the ChromaDB vector store, preventing synchronization gaps.
+    """
+    connection = self.db._get_connection()
+    cursor = connection.cursor(dictionary=True)
+    cursor.execute("SELECT file_id, file_name, semantic_summary FROM file")
+    rows = cursor.fetchall()
+    cursor.close()
+    connection.close()
+
+    for row in rows:
+      self.ingest_hybrid_data(
+          file_id=row["file_id"],
+          file_name=row["file_name"],
+          semantic_summary=row["semantic_summary"],
+      )
+    print(f"[INFO] Successfully synced {len(rows)} records from MySQL to ChromaDB.")
 
   def retrieve(self, query_text: str, n_results: int = 5):
     """Scans vectors for similarity, extracts Primary Key (file_id),
@@ -79,7 +96,7 @@ if __name__ == "__main__":
   print("Initializing Local Test Harness...")
   real_db_config = {
       "host": "localhost",
-      "database": "RIRAG",  # Your actual database name
+      "database": "RIRAGTEST",  # Corrected to match your SQL creation script
       "user": "root",
       "password": "qwerty",
       "port": 3306,
@@ -88,32 +105,8 @@ if __name__ == "__main__":
   db = DatabaseManager(real_db_config)
   system = HybridRIRAGSystem(db)
 
-  # Sync/Ingest the vector representations for records already in MySQL
-  system.ingest_hybrid_data(
-      file_id="DOC-001",
-      file_name="consistency_guidelines.txt",
-      content=(
-          "The multi-round validation loop checks model responses against"
-          " persistent evidence using database primary keys."
-      ),
-      semantic_summary=(
-          "Defines multi-round contradiction detection and evidence grounding."
-      ),
-      grade=9.5,
-      comments="Approved by lead engineer.",
-  )
-
-  system.ingest_hybrid_data(
-      file_id="DOC-002",
-      file_name="agent_safety.txt",
-      content=(
-          "Frontier autonomous agents must maintain structural consistency to"
-          " prevent cascading decision failures."
-      ),
-      semantic_summary="Autonomous agent safety and consistency rules.",
-      grade=8.8,
-      comments="Needs minor revision on edge cases.",
-  )
+  # Automatically sync all 13 records directly from MySQL
+  system.ingest_from_database()
 
   # Run a semantic query test
   test_query = "How do we prevent agent failure and drift?"

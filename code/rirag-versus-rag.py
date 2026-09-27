@@ -1,4 +1,5 @@
 """Evaluates normal RAG against RI-RAG
+Round 1 and Round 2
 @assistant: Gemini
 """
 

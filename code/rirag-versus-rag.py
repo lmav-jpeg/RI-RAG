@@ -1,7 +1,9 @@
-"""Evaluates normal RAG against RI-RAG"""
+"""Evaluates normal RAG against RI-RAG
+@assistant: Gemini
+"""
 
 import sys
-from app import *
+from rirag import *
 import time
 
 # Disable Hugging Face symlink warning on Windows

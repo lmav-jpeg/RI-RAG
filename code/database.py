@@ -1,3 +1,7 @@
+"""
+Connection to MySQL database
+assistant: Gemini"""
+
 from mysql.connector import Error, connect
 
 

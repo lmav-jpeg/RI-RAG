@@ -1,5 +1,7 @@
 /*
-@author: Laurie MAVOUNGOU, JK AI CEO, lmavoungou@outlook.be*/
+@author: Laurie MAVOUNGOU, JK AI CEO, lmavoungou@outlook.be
+In this project we used 2 databases. One for the first round with light payload
+Another one for the second round with heavy payload*/
 
 DROP DATABASE IF EXISTS RIRAGTEST;
 
@@ -39,7 +41,7 @@ VALUES
 ('DOC-012', '012_context_pruning.txt', 'Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps.', 'Context pruning and token efficiency.', 8.9, 'Needs benchmark validation.'),
 ('DOC-013', '013_distributed_caching.txt', 'Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. Distributed Redis caching layers minimize database round-trip latency for frequently accessed records.', 'Redis caching for hybrid retrieval pipelines.', 9.4, 'Production ready.');
 
-CREATE USER 'test_user'@'localhost' IDENTIFIED BY '';
+#CREATE USER 'test_user'@'localhost' IDENTIFIED BY '';
 -- Grant restricted read-only access to the RIRAGTEST database only
 GRANT SELECT ON RIRAGTEST.* TO 'test_user'@'localhost';
 

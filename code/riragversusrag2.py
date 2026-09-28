@@ -1,7 +1,9 @@
 """Evaluates normal RAG against RI-RAG
+With the second database (heavier payloads)
 Round 1 and Round 2
 @assistant: Gemini
 """
+
 
 import sys
 from rirag import *

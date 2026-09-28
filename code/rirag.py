@@ -43,7 +43,7 @@ class HybridRIRAGSystem:
         documents=[semantic_summary],
         metadatas=[{"file_name": file_name, "file_id": file_id}],
     )
-    print(f"Vector Store: Indexed semantic entry point for [PK: {file_id}]")
+    #print(f"Vector Store: Indexed semantic entry point for [PK: {file_id}]")
 
   def ingest_from_database(self):
     """Automatically pulls all records from MySQL and syncs them
@@ -63,7 +63,7 @@ class HybridRIRAGSystem:
           file_name=row["file_name"],
           semantic_summary=row["semantic_summary"],
       )
-    print(f"[INFO] Successfully synced {len(rows)} records from MySQL to ChromaDB.")
+    #print(f"[INFO] Successfully synced {len(rows)} records from MySQL to ChromaDB.")
 
   def retrieve(self, query_text: str, n_results: int = 5):
     """Scans vectors for similarity, extracts Primary Key (file_id),

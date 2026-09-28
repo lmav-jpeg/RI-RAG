@@ -1,530 +1,806 @@
-"""Evaluates normal RAG against RI-RAG
-With the second database (heavier payloads)
-Round 1 and Round 2
+"""
+Evaluates Standard RAG against RI-RAG
+using the same MySQL authoritative dataset.
+
+RI-RAG:
+    Chroma -> semantic_summary + file_id
+    MySQL  -> authoritative content + metadata
+
+Standard RAG:
+    Chroma -> full content + metadata
+
+@conceptor: Laurie MAVOUNGOU, JK AI CEO
 @assistant: Gemini
 """
 
-
+import os
 import sys
-from rirag import *
 import time
 
-# Disable Hugging Face symlink warning on Windows
+import chromadb
+import psutil
+
+from database import DatabaseManager
+from rirag import HybridRIRAGSystem
+from sentence_transformers import SentenceTransformer
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
+DB_CONFIG = {
+    "host": "localhost",
+    "database": "RIRAGTEST",
+    "user": "root",
+    "password": "qwerty",
+    "port": 3306,
+}
+
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+
+STANDARD_COLLECTION_NAME = "normal_rag_store"
+
+TEST_QUERIES = [
+    "How do we prevent agent failure and drift?",
+    "How is Role-Based Access Control enforced at the database boundary?",
+    "What RAM footprint reductions are achieved by storing only chunk IDs in vector indices?",
+]
+
+
+# ============================================================
+# PROCESS MEMORY
+# ============================================================
+
+PROCESS = psutil.Process(os.getpid())
+
+
+def get_rss_bytes():
+    """Return current Python process RSS in bytes."""
+    return PROCESS.memory_info().rss
+
+
+def get_rss_mb():
+    """Return current Python process RSS in MB."""
+    return get_rss_bytes() / (1024 * 1024)
+
+
+# ============================================================
+# PYTHON OBJECT SIZE
+# ============================================================
 
 def get_deep_sizeof(obj):
-  """Recursively calculates the memory footprint of Python objects in bytes."""
-  seen = set()
+    """
+    Recursively calculates the size of a Python object.
 
-  def inner(o):
-    if id(o) in seen:
-      return 0
-    seen.add(id(o))
-    size = sys.getsizeof(o)
-    if isinstance(o, dict):
-      size += sum(inner(k) + inner(v) for k, v in o.items())
-    elif isinstance(o, (list, tuple, set, frozenset)):
-      size += sum(inner(item) for item in o)
-    return size
+    IMPORTANT:
+    This measures the materialized Python representation
+    returned by Chroma. It is NOT total physical RAM usage.
+    """
 
-  return inner(obj)
+    seen = set()
 
-# ==========================================
-# 2. STANDARD RAG BASELINE SYSTEM
-# ==========================================
+    def inner(o):
+
+        object_id = id(o)
+
+        if object_id in seen:
+            return 0
+
+        seen.add(object_id)
+
+        size = sys.getsizeof(o)
+
+        if isinstance(o, dict):
+
+            size += sum(
+                inner(k) + inner(v)
+                for k, v in o.items()
+            )
+
+        elif isinstance(
+            o,
+            (list, tuple, set, frozenset)
+        ):
+
+            size += sum(
+                inner(item)
+                for item in o
+            )
+
+        return size
+
+    return inner(obj)
+
+
+# ============================================================
+# STANDARD RAG
+# ============================================================
+
 class NormalRAGSystem:
 
-  def __init__(self, collection_name: str = "normal_rag_store"):
-    self.chroma_client = chromadb.Client()
-    self.collection = self.chroma_client.get_or_create_collection(
-        name=collection_name
-    )
-    self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    def __init__(
+        self,
+        db_manager: DatabaseManager,
+        collection_name: str = STANDARD_COLLECTION_NAME,
+    ):
 
-  def ingest_document(
-      self,
-      doc_id: str,
-      file_name: str,
-      content: str,
-      semantic_summary: str,
-      grade: float,
-      comments: str,
-  ):
-    """Stores text, metadata, and embeddings entirely inside ChromaDB."""
-    text_to_embed = f"Meaning: {semantic_summary}\nContent: {content}"
-    embedding = self.embedding_model.encode(text_to_embed).tolist()
+        self.db = db_manager
 
-    self.collection.upsert(
-        ids=[doc_id],
-        embeddings=[embedding],
-        documents=[content],
-        metadatas=[{
-            "file_name": file_name,
-            "semantic_summary": semantic_summary,
-            "grade": grade,
-            "comments": comments,
-        }],
-    )
+        self.chroma_client = chromadb.Client()
 
-  def retrieve(self, query_text: str, n_results: int = 1):
-    """Retrieves text and metadata directly from the vector store."""
-    start_time = time.time()
-    query_embedding = self.embedding_model.encode(query_text).tolist()
-    vector_results = self.collection.query(
-        query_embeddings=[query_embedding], n_results=n_results
-    )
-    latency = (time.time() - start_time) * 1000  # ms
-
-    retrieved_records = []
-    if vector_results and vector_results["ids"] and vector_results["ids"][0]:
-      matched_ids = vector_results["ids"][0]
-      documents = vector_results["documents"][0]
-      metadatas = vector_results["metadatas"][0]
-      distances = vector_results["distances"][0]
-
-      for doc_id, doc, metadata, distance in zip(
-          matched_ids, documents, metadatas, distances
-      ):
-        record = {
-            "file_id": doc_id,
-            "file_name": metadata.get("file_name"),
-            "content": doc,
-            "semantic_summary": metadata.get("semantic_summary"),
-            "grade": metadata.get("grade"),
-            "comments": metadata.get("comments"),
-            "vector_distance": distance,
-        }
-        retrieved_records.append(record)
-
-    return retrieved_records, latency
-
-
-# ==========================================
-# 3. SIDE-BY-SIDE BENCHMARK EXECUTION
-# ==========================================
-if __name__ == "__main__":
-    # ==========================================
-    # 2. STANDARD RAG BASELINE SYSTEM
-    # ==========================================
-    class NormalRAGSystem:
-
-        def __init__(self, collection_name: str = "normal_rag_store"):
-            self.chroma_client = chromadb.Client()
-            self.collection = self.chroma_client.get_or_create_collection(
+        self.collection = (
+            self.chroma_client.get_or_create_collection(
                 name=collection_name
             )
-            self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        )
 
-        def ingest_document(
-                self,
-                doc_id: str,
-                file_name: str,
-                content: str,
-                semantic_summary: str,
-                grade: float,
-                comments: str,
-        ):
-            # Standard RAG stores everything (heavy text + metadata) inside ChromaDB
-            text_to_embed = f"Meaning: {semantic_summary}\nContent: {content}"
-            embedding = self.embedding_model.encode(text_to_embed).tolist()
+        self.embedding_model = SentenceTransformer(
+            EMBEDDING_MODEL
+        )
 
-            self.collection.upsert(
-                ids=[doc_id],
-                embeddings=[embedding],
-                documents=[content],
-                metadatas=[{
+    # --------------------------------------------------------
+    # DATABASE INGESTION
+    # --------------------------------------------------------
+
+    def ingest_from_database(self):
+
+        connection = self.db._get_connection()
+
+        cursor = connection.cursor(
+            dictionary=True
+        )
+
+        cursor.execute(
+            """
+            SELECT
+                file_id,
+                file_name,
+                content,
+                semantic_summary,
+                grade,
+                comments
+            FROM file
+            """
+        )
+
+        rows = cursor.fetchall()
+
+        cursor.close()
+        connection.close()
+
+        for row in rows:
+
+            self.ingest_document(
+                file_id=row["file_id"],
+                file_name=row["file_name"],
+                content=row["content"],
+                semantic_summary=row["semantic_summary"],
+                grade=row["grade"],
+                comments=row["comments"],
+            )
+
+        print(
+            f"[Standard RAG] "
+            f"Indexed {len(rows)} records."
+        )
+
+    # --------------------------------------------------------
+    # STANDARD RAG DOCUMENT
+    # --------------------------------------------------------
+
+    def ingest_document(
+        self,
+        file_id,
+        file_name,
+        content,
+        semantic_summary,
+        grade,
+        comments,
+    ):
+
+        # Standard RAG embeds the complete information.
+        text_to_embed = (
+            f"Meaning: {semantic_summary}\n"
+            f"Content: {content}"
+        )
+
+        embedding = (
+            self.embedding_model
+            .encode(text_to_embed)
+            .tolist()
+        )
+
+        self.collection.upsert(
+            ids=[file_id],
+
+            embeddings=[embedding],
+
+            # IMPORTANT:
+            # Standard RAG stores full content.
+            documents=[content],
+
+            metadatas=[
+                {
                     "file_name": file_name,
                     "semantic_summary": semantic_summary,
                     "grade": grade,
                     "comments": comments,
-                }],
+                    "file_id": file_id,
+                }
+            ],
+        )
+
+    # --------------------------------------------------------
+    # RETRIEVAL
+    # --------------------------------------------------------
+
+    def retrieve(
+        self,
+        query_text,
+        n_results=1,
+    ):
+
+        query_embedding = (
+            self.embedding_model
+            .encode(query_text)
+            .tolist()
+        )
+
+        vector_results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results,
+        )
+
+        retrieved_records = []
+
+        if (
+            vector_results
+            and vector_results["ids"]
+            and vector_results["ids"][0]
+        ):
+
+            matched_ids = vector_results["ids"][0]
+
+            documents = (
+                vector_results["documents"][0]
             )
 
-        def retrieve(self, query_text: str, n_results: int = 1):
-            start_time = time.time()
-            query_embedding = self.embedding_model.encode(query_text).tolist()
-            vector_results = self.collection.query(
-                query_embeddings=[query_embedding], n_results=n_results
+            metadatas = (
+                vector_results["metadatas"][0]
             )
-            latency = (time.time() - start_time) * 1000  # ms
 
-            retrieved_records = []
-            if vector_results and vector_results["ids"] and vector_results["ids"][0]:
-                matched_ids = vector_results["ids"][0]
-                documents = vector_results["documents"][0]
-                metadatas = vector_results["metadatas"][0]
-                distances = vector_results["distances"][0]
+            distances = (
+                vector_results["distances"][0]
+            )
 
-                for doc_id, doc, metadata, distance in zip(
-                        matched_ids, documents, metadatas, distances
-                ):
-                    record = {
-                        "file_id": doc_id,
-                        "file_name": metadata.get("file_name"),
-                        "content": doc,
-                        "semantic_summary": metadata.get("semantic_summary"),
-                        "grade": metadata.get("grade"),
-                        "comments": metadata.get("comments"),
+            for (
+                file_id,
+                document,
+                metadata,
+                distance,
+            ) in zip(
+                matched_ids,
+                documents,
+                metadatas,
+                distances,
+            ):
+
+                retrieved_records.append(
+                    {
+                        "file_id": file_id,
+
+                        "file_name": metadata.get(
+                            "file_name"
+                        ),
+
+                        "content": document,
+
+                        "semantic_summary": metadata.get(
+                            "semantic_summary"
+                        ),
+
+                        "grade": metadata.get(
+                            "grade"
+                        ),
+
+                        "comments": metadata.get(
+                            "comments"
+                        ),
+
                         "vector_distance": distance,
                     }
-                    retrieved_records.append(record)
+                )
 
-            return retrieved_records, latency
+        return retrieved_records
 
 
-# ==========================================
-# 3. SIDE-BY-SIDE BENCHMARK EXECUTION
-# ==========================================
-if __name__ == "__main__":
-    print("=" * 70)
-    print("COMPARING RI-RAG vs. STANDARD RAG PERFORMANCE HARNESS")
-    print("=" * 70)
+# ============================================================
+# LATENCY MEASUREMENT
+# ============================================================
 
-    real_db_config = {
-        "host": "localhost",
-        "database": "RIRAGTEST",
-        "user": "root",
-        "password": "qwerty",
-        "port": 3306,
-    }
+def measure_retrieval(
+    system,
+    query,
+    n_results=1,
+):
+    """
+    Measures the complete retrieval operation.
 
-    print("[1/3] Initializing Systems & Connecting to MySQL...")
-    db = DatabaseManager(real_db_config)
-    rirag_system = HybridRIRAGSystem(db)
+    For RI-RAG this includes:
 
-    print("[2/3] Ingesting Records into Both Environments...")
-    rirag_system.ingest_from_database()  # Syncs all rows dynamically from MySQL
-    normal_rag = NormalRAGSystem()
+        embedding
+        +
+        Chroma search
+        +
+        MySQL hydration
 
-    # Test Data Records
-    records = [
-        {
-            "file_id": "DOC-001",
-            "file_name": "001_consistency_guidelines.txt",
-            "content": (
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys."
-            ),
-            "semantic_summary": "Defines multi-round contradiction detection and evidence grounding.",
-            "grade": 8.0,
-            "comments": "Approved by lead engineer.",
-        },
-        {
-            "file_id": "DOC-002",
-            "file_name": "002_agent_safety.txt",
-            "content": (
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures."
-            ),
-            "semantic_summary": "Autonomous agent safety and consistency rules.",
-            "grade": 8.5,
-            "comments": "Needs minor revision on edge cases.",
-        },
-        {
-            "file_id": "DOC-003",
-            "file_name": "003_rag_architecture.txt",
-            "content": (
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys."
-            ),
-            "semantic_summary": "Overview of RI-RAG architectural decoupling.",
-            "grade": 9.8,
-            "comments": "Production ready.",
-        },
-        {
-            "file_id": "DOC-004",
-            "file_name": "004_vector_optimization.txt",
-            "content": (
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced."
-            ),
-            "semantic_summary": "Memory optimization strategies for vector databases.",
-            "grade": 9.7,
-            "comments": "Requires further RAM profiling.",
-        },
-        {
-            "file_id": "DOC-005",
-            "file_name": "005_rbac_security.txt",
-            "content": (
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account."
-            ),
-            "semantic_summary": "Database-level access control mechanisms.",
-            "grade": 8.7,
-            "comments": "Compliant with security standards.",
-        },
-        {
-            "file_id": "DOC-006",
-            "file_name": "006_audit_logging.txt",
-            "content": (
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability."
-            ),
-            "semantic_summary": "Audit trail requirements for AI retrieval pipelines.",
-            "grade": 8.2,
-            "comments": "Standardized across services.",
-        },
-        {
-            "file_id": "DOC-007",
-            "file_name": "007_adversarial_robustness.txt",
-            "content": (
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations."
-            ),
-            "semantic_summary": "Adversarial machine learning defense pipelines.",
-            "grade": 8.7,
-            "comments": "Under active evaluation.",
-        },
-        {
-            "file_id": "DOC-008",
-            "file_name": "008_federated_privacy.txt",
-            "content": (
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data."
-            ),
-            "semantic_summary": "Privacy-preserving model aggregation techniques.",
-            "grade": 9.4,
-            "comments": "Validated on medical datasets.",
-        },
-        {
-            "file_id": "DOC-009",
-            "file_name": "009_latency_benchmarks.txt",
-            "content": (
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups."
-            ),
-            "semantic_summary": "Query latency analysis for hybrid retrieval.",
-            "grade": 9.3,
-            "comments": "Optimizing connection pooling.",
-        },
-        {
-            "file_id": "DOC-010",
-            "file_name": "010_code_based_crypto.txt",
-            "content": (
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage."
-            ),
-            "semantic_summary": "Code-based cryptosystems and error correction.",
-            "grade": 9.2,
-            "comments": "Reviewed by crypto team.",
-        },
-        {
-            "file_id": "DOC-011",
-            "file_name": "011_edge_ai_integration.txt",
-            "content": (
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints."
-            ),
-            "semantic_summary": "Edge device quantization rules.",
-            "grade": 9.1,
-            "comments": "Approved for embedded deployment.",
-        },
-        {
-            "file_id": "DOC-012",
-            "file_name": "012_context_pruning.txt",
-            "content": (
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps."
-            ),
-            "semantic_summary": "Context pruning and token efficiency.",
-            "grade": 8.9,
-            "comments": "Needs benchmark validation.",
-        },
-        {
-            "file_id": "DOC-013",
-            "file_name": "013_distributed_caching.txt",
-            "content": (
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records."
-            ),
-            "semantic_summary": "Redis caching for hybrid retrieval pipelines.",
-            "grade": 9.4,
-            "comments": "Production ready.",
-        },
-    ]
+    For Standard RAG this includes:
 
-    print("[2/3] Ingesting Records into Both Environments...")
-    for rec in records:
-        # Ingest into RI-RAG (MySQL + ChromaDB pointer)
-        rirag_system.ingest_hybrid_data(
-            rec["file_id"],
-            rec["file_name"],
-            rec["semantic_summary"],
-        )
-        # Ingest into Standard RAG (ChromaDB-only payload store)
-        normal_rag.ingest_document(
-            rec["file_id"],
-            rec["file_name"],
-            rec["content"],
-            rec["semantic_summary"],
-            rec["grade"],
-            rec["comments"],
+        embedding
+        +
+        Chroma search
+    """
+
+    start = time.perf_counter()
+
+    results = system.retrieve(
+        query,
+        n_results=n_results,
+    )
+
+    elapsed_ms = (
+        time.perf_counter() - start
+    ) * 1000
+
+    return results, elapsed_ms
+
+
+# ============================================================
+# MATERIALIZED VECTOR STORE SIZE
+# ============================================================
+
+def measure_vector_store_size(collection):
+
+    data = collection.get(
+        include=[
+            "embeddings",
+            "documents",
+            "metadatas",
+        ]
+    )
+
+    return get_deep_sizeof(data)
+
+
+# ============================================================
+# RETRIEVAL BENCHMARK
+# ============================================================
+
+def benchmark_latency(
+    system,
+    queries,
+    repetitions=10,
+):
+
+    measurements = []
+
+    # --------------------------------------------------------
+    # Warm-up
+    # --------------------------------------------------------
+
+    for query in queries:
+
+        system.retrieve(
+            query,
+            n_results=1,
         )
 
-    # Run Comparative Query
-    test_queries = [
-        "How do we prevent agent failure and drift?",
-        "How is Role-Based Access Control enforced at the database boundary?",
-        "What RAM footprint reductions are achieved by storing only chunk IDs in vector indices?"
-    ]
+    # --------------------------------------------------------
+    # Measurements
+    # --------------------------------------------------------
 
-    for i, test_query in enumerate(test_queries, 1):
-        print(f"\n[{i}/{len(test_queries)}] Executing Query: '{test_query}'")
-        # Insert your RI-RAG vector search & primary key hydration logic here
+    for _ in range(repetitions):
 
-        # --- Test RI-RAG ---
-        start_t = time.time()
-        rirag_results = rirag_system.retrieve(test_query, n_results=1)
-        rirag_latency = (time.time() - start_t) * 1000
+        for query in queries:
 
-        print("--- RI-RAG (Hybrid Architecture) Results ---")
-        if rirag_results:
-            res = rirag_results[0]
-            print(f"Matched Primary Key   : {res['file_id']}")
-            print(f"File Name             : {res['file_name']}")
-            print(f"MySQL Relational Grade: {res['grade']}")
-            print(f"MySQL Comments        : {res['comments']}")
-            print(f"Authoritative Text    : {res['content']}")
-            print(f"Total Execution Time  : {rirag_latency:.2f} ms")
+            start = time.perf_counter()
 
-        print("\n" + "-" * 50 + "\n")
-
-        # --- Test Standard RAG ---
-        normal_results, normal_latency = normal_rag.retrieve(test_query, n_results=1)
-
-        print("--- Standard RAG Baseline Results ---")
-        if normal_results:
-            res = normal_results[0]
-            print(f"Matched Document ID   : {res['file_id']}")
-            print(f"File Name             : {res['file_name']}")
-            print(f"Vector Store Grade    : {res['grade']}")
-            print(f"Vector Store Comments : {res['comments']}")
-            print(f"Retrieved Text        : {res['content']}")
-            print(f"Total Execution Time  : {normal_latency:.2f} ms")
-
-        # --- Memory Usage Evaluation ---
-        print("\n" + "=" * 70)
-        print("VECTOR STORE MEMORY FOOTPRINT BENCHMARK")
-        print("=" * 70)
-
-        normal_store_data = normal_rag.collection.get(
-            include=["embeddings", "documents", "metadatas"]
-        )
-        rirag_store_data = rirag_system.collection.get(
-            include=["embeddings", "documents", "metadatas"]
-        )
-
-        normal_memory_bytes = get_deep_sizeof(normal_store_data)
-        rirag_memory_bytes = get_deep_sizeof(rirag_store_data)
-
-        print(
-            f"Standard RAG Vector Store Memory : {normal_memory_bytes:,} bytes"
-            f" ({normal_memory_bytes / 1024:.2f} KB)"
-        )
-        print(
-            f"RI-RAG Vector Store Memory       : {rirag_memory_bytes:,} bytes"
-            f" ({rirag_memory_bytes / 1024:.2f} KB)"
-        )
-
-        if normal_memory_bytes > 0:
-            memory_savings = (
-                                     (normal_memory_bytes - rirag_memory_bytes) / normal_memory_bytes
-                             ) * 100
-            print(
-                f"-> Vector Store Memory Saved by RI-RAG: {memory_savings:.1f}%"
-                " reduction"
+            system.retrieve(
+                query,
+                n_results=1,
             )
 
-        print("=" * 70)
-        print("EVALUATION HARNESS EXECUTION COMPLETE.")
-        print("=" * 70)
+            elapsed_ms = (
+                time.perf_counter() - start
+            ) * 1000
+
+            measurements.append(
+                elapsed_ms
+            )
+
+    return measurements
+
+
+def calculate_statistics(values):
+
+    if not values:
+        return {
+            "mean": 0,
+            "min": 0,
+            "max": 0,
+        }
+
+    return {
+        "mean": sum(values) / len(values),
+        "min": min(values),
+        "max": max(values),
+    }
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    print("=" * 75)
+    print("RI-RAG vs STANDARD RAG")
+    print("=" * 75)
+
+    # ========================================================
+    # 1. DATABASE
+    # ========================================================
+
+    print("\n[1/6] Connecting to MySQL...")
+
+    db = DatabaseManager(DB_CONFIG)
+
+    # ========================================================
+    # 2. INITIALIZE RI-RAG
+    # ========================================================
+
+    print("[2/6] Initializing RI-RAG...")
+
+    rirag_system = HybridRIRAGSystem(
+        db,
+        collection_name="ri_rag_store",
+    )
+
+    # ========================================================
+    # 3. INITIALIZE STANDARD RAG
+    # ========================================================
+
+    print("[3/6] Initializing Standard RAG...")
+
+    normal_rag = NormalRAGSystem(
+        db_manager=db,
+        collection_name=STANDARD_COLLECTION_NAME,
+    )
+
+    # ========================================================
+    # 4. INGESTION
+    # ========================================================
+
+    print("\n[4/6] Synchronizing both systems from MySQL...")
+
+    # Each system is ingested exactly once.
+
+    rss_before_rirag = get_rss_bytes()
+
+    rirag_system.ingest_from_database()
+
+    rss_after_rirag = get_rss_bytes()
+
+    rss_before_standard = get_rss_bytes()
+
+    normal_rag.ingest_from_database()
+
+    rss_after_standard = get_rss_bytes()
+
+    print(
+        f"\nRI-RAG ingestion RSS delta: "
+        f"{(rss_after_rirag - rss_before_rirag) / (1024 * 1024):.2f} MB"
+    )
+
+    print(
+        f"Standard RAG ingestion RSS delta: "
+        f"{(rss_after_standard - rss_before_standard) / (1024 * 1024):.2f} MB"
+    )
+
+    # ========================================================
+    # 5. QUERY COMPARISON
+    # ========================================================
+
+    print("\n[5/6] Running retrieval comparison...")
+
+    print("=" * 75)
+
+    for i, query in enumerate(
+        TEST_QUERIES,
+        start=1,
+    ):
+
+        print(
+            f"\nQuery {i}: {query}"
+        )
+
+        # ----------------------------------------------------
+        # RI-RAG
+        # ----------------------------------------------------
+
+        rirag_results, rirag_latency = (
+            measure_retrieval(
+                rirag_system,
+                query,
+                n_results=1,
+            )
+        )
+
+        print("\n--- RI-RAG ---")
+
+        if rirag_results:
+
+            result = rirag_results[0]
+
+            print(
+                f"Matched Primary Key : "
+                f"{result['file_id']}"
+            )
+
+            print(
+                f"File Name           : "
+                f"{result['file_name']}"
+            )
+
+            print(
+                f"MySQL Grade         : "
+                f"{result['grade']}"
+            )
+
+            print(
+                f"MySQL Comments      : "
+                f"{result['comments']}"
+            )
+
+            print(
+                f"Authoritative Text  : "
+                f"{result['content']}"
+            )
+
+            print(
+                f"Vector Distance     : "
+                f"{result['vector_distance']:.4f}"
+            )
+
+            print(
+                f"Total Retrieval     : "
+                f"{rirag_latency:.2f} ms"
+            )
+
+        else:
+
+            print("No RI-RAG result.")
+
+        # ----------------------------------------------------
+        # STANDARD RAG
+        # ----------------------------------------------------
+
+        normal_results, normal_latency = (
+            measure_retrieval(
+                normal_rag,
+                query,
+                n_results=1,
+            )
+        )
+
+        print("\n--- STANDARD RAG ---")
+
+        if normal_results:
+
+            result = normal_results[0]
+
+            print(
+                f"Matched Document ID : "
+                f"{result['file_id']}"
+            )
+
+            print(
+                f"File Name           : "
+                f"{result['file_name']}"
+            )
+
+            print(
+                f"Vector Store Grade  : "
+                f"{result['grade']}"
+            )
+
+            print(
+                f"Vector Store Comments: "
+                f"{result['comments']}"
+            )
+
+            print(
+                f"Retrieved Text      : "
+                f"{result['content']}"
+            )
+
+            print(
+                f"Vector Distance     : "
+                f"{result['vector_distance']:.4f}"
+            )
+
+            print(
+                f"Total Retrieval     : "
+                f"{normal_latency:.2f} ms"
+            )
+
+        else:
+
+            print("No Standard RAG result.")
+
+    # ========================================================
+    # 6. VECTOR STORE SIZE
+    # ========================================================
+
+    print("\n" + "=" * 75)
+    print("VECTOR STORE REPRESENTATION SIZE")
+    print("=" * 75)
+
+    normal_size = (
+        measure_vector_store_size(
+            normal_rag.collection
+        )
+    )
+
+    rirag_size = (
+        measure_vector_store_size(
+            rirag_system.collection
+        )
+    )
+
+    print(
+        f"Standard RAG : "
+        f"{normal_size:,} bytes "
+        f"({normal_size / 1024:.2f} KB)"
+    )
+
+    print(
+        f"RI-RAG      : "
+        f"{rirag_size:,} bytes "
+        f"({rirag_size / 1024:.2f} KB)"
+    )
+
+    if normal_size > 0:
+
+        reduction = (
+            (normal_size - rirag_size)
+            / normal_size
+        ) * 100
+
+        print(
+            f"\nRI-RAG materialized vector "
+            f"representation reduction: "
+            f"{reduction:.2f}%"
+        )
+
+    # ========================================================
+    # REPEATED LATENCY
+    # ========================================================
+
+    print("\n" + "=" * 75)
+    print("REPEATED QUERY PERFORMANCE")
+    print("=" * 75)
+
+    rirag_latencies = benchmark_latency(
+        rirag_system,
+        TEST_QUERIES,
+        repetitions=10,
+    )
+
+    normal_latencies = benchmark_latency(
+        normal_rag,
+        TEST_QUERIES,
+        repetitions=10,
+    )
+
+    rirag_stats = calculate_statistics(
+        rirag_latencies
+    )
+
+    normal_stats = calculate_statistics(
+        normal_latencies
+    )
+
+    print(
+        f"Standard RAG mean: "
+        f"{normal_stats['mean']:.2f} ms"
+    )
+
+    print(
+        f"RI-RAG mean     : "
+        f"{rirag_stats['mean']:.2f} ms"
+    )
+
+    print(
+        f"\nStandard RAG min: "
+        f"{normal_stats['min']:.2f} ms"
+    )
+
+    print(
+        f"Standard RAG max: "
+        f"{normal_stats['max']:.2f} ms"
+    )
+
+    print(
+        f"RI-RAG min     : "
+        f"{rirag_stats['min']:.2f} ms"
+    )
+
+    print(
+        f"RI-RAG max     : "
+        f"{rirag_stats['max']:.2f} ms"
+    )
+
+    # ========================================================
+    # FINAL SUMMARY
+    # ========================================================
+
+    print("\n" + "=" * 75)
+    print("FINAL SUMMARY")
+    print("=" * 75)
+
+    if normal_size > 0:
+
+        reduction = (
+            (normal_size - rirag_size)
+            / normal_size
+        ) * 100
+
+        print(
+            f"Vector representation reduction: "
+            f"{reduction:.2f}%"
+        )
+
+    print(
+        f"Standard RAG average latency: "
+        f"{normal_stats['mean']:.2f} ms"
+    )
+
+    print(
+        f"RI-RAG average latency: "
+        f"{rirag_stats['mean']:.2f} ms"
+    )
+
+    print("\nInterpretation:")
+
+    print(
+        "1. Standard RAG stores the full payload "
+        "inside Chroma."
+    )
+
+    print(
+        "2. RI-RAG stores only the semantic summary "
+        "and primary-key relationship in Chroma."
+    )
+
+    print(
+        "3. RI-RAG resolves the primary key through "
+        "MySQL to obtain authoritative content."
+    )
+
+    print(
+        "4. The vector-size comparison measures the "
+        "materialized representation returned by Chroma."
+    )
+
+    print(
+        "5. The RI-RAG retrieval latency includes "
+        "the relational hydration step."
+    )
+
+    print("\n" + "=" * 75)
+    print("BENCHMARK COMPLETE")
+    print("=" * 75)

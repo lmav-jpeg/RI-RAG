@@ -28,44 +28,53 @@ def test_precision_recall_f1(rirag_system):
 
   test_queries = {
       (
-          "How do we check model responses against persistent evidence using"
-          " database primary keys?"
+          "How does the multi-round validation loop check model responses "
+          "against persistent evidence using database primary keys?"
       ): "DOC-001",
+
       (
-          "How do frontier autonomous agents maintain structural consistency to"
-          " prevent cascading decision failures?"
+          "How do frontier autonomous agents maintain structural consistency "
+          "to prevent cascading decision failures?"
       ): "DOC-002",
+
       (
-          "How does Relational-Indexed Retrieval-Augmented Generation decouple"
-          " vector search from authoritative records using foreign keys?"
+          "How does Relational-Indexed Retrieval-Augmented Generation "
+          "decouple vector search from authoritative records using foreign keys?"
       ): "DOC-003",
+
       (
-          "What RAM footprint reductions are achieved by storing only chunk IDs"
-          " and embeddings in vector indices?"
+          "How does storing only chunk IDs and embeddings in vector indices "
+          "reduce RAM footprint?"
       ): "DOC-004",
+
       (
-          "How is Role-Based Access Control enforced at the database boundary via"
-          " a privileged service account?"
+          "How is Role-Based Access Control enforced at the database boundary "
+          "via a privileged service account?"
       ): "DOC-005",
+
       (
-          "What are the audit trail requirements and immutable logging steps for"
-          " AI retrieval pipelines?"
+          "What are the requirements for immutable audit logs for retrieval "
+          "requests and relational hydration steps?"
       ): "DOC-006",
+
       (
-          "How do neural networks incorporate adversarial training loops to"
-          " resist gradient-based input perturbations?"
+          "How do neural networks use adversarial training loops to resist "
+          "gradient-based input perturbations?"
       ): "DOC-007",
+
       (
-          "How does federated learning enable decentralized model updates"
-          " without exposing raw institutional data?"
+          "How does federated learning enable decentralized model updates "
+          "without exposing raw institutional data?"
       ): "DOC-008",
+
       (
-          "What are the network round-trip trade-offs and latency impacts when"
-          " querying relational databases?"
+          "What latency trade-offs are introduced by network round-trips "
+          "to relational databases compared with in-memory lookups?"
       ): "DOC-009",
+
       (
-          "How do quasi-cyclic error-correcting codes provide post-quantum"
-          " cryptographic resilience for secure record storage?"
+          "How do quasi-cyclic error-correcting codes provide post-quantum "
+          "cryptographic resilience for secure record storage?"
       ): "DOC-010",
   }
 
@@ -178,249 +187,15 @@ if __name__ == "__main__":
     db = DatabaseManager(real_db_config)
     rirag_system = HybridRIRAGSystem(db)
     # Test Data Records
-    records = [
-        {
-            "file_id": "DOC-001",
-            "file_name": "001_consistency_guidelines.txt",
-            "content": (
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys. "
-                "The multi-round validation loop checks model responses against persistent evidence using database primary keys."
-            ),
-            "semantic_summary": "Defines multi-round contradiction detection and evidence grounding.",
-            "grade": 8.0,
-            "comments": "Approved by lead engineer.",
-        },
-        {
-            "file_id": "DOC-002",
-            "file_name": "002_agent_safety.txt",
-            "content": (
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures. "
-                "Frontier autonomous agents must maintain structural consistency to prevent cascading decision failures."
-            ),
-            "semantic_summary": "Autonomous agent safety and consistency rules.",
-            "grade": 8.5,
-            "comments": "Needs minor revision on edge cases.",
-        },
-        {
-            "file_id": "DOC-003",
-            "file_name": "003_rag_architecture.txt",
-            "content": (
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys. "
-                "Relational-Indexed Retrieval-Augmented Generation decouples vector search from authoritative records using foreign keys."
-            ),
-            "semantic_summary": "Overview of RI-RAG architectural decoupling.",
-            "grade": 9.8,
-            "comments": "Production ready.",
-        },
-        {
-            "file_id": "DOC-004",
-            "file_name": "004_vector_optimization.txt",
-            "content": (
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced. "
-                "By storing only chunk IDs and embeddings in vector indices, RAM footprint is significantly reduced."
-            ),
-            "semantic_summary": "Memory optimization strategies for vector databases.",
-            "grade": 9.7,
-            "comments": "Requires further RAM profiling.",
-        },
-        {
-            "file_id": "DOC-005",
-            "file_name": "005_rbac_security.txt",
-            "content": (
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account. "
-                "Role-Based Access Control is enforced at the database boundary via a privileged service account."
-            ),
-            "semantic_summary": "Database-level access control mechanisms.",
-            "grade": 8.7,
-            "comments": "Compliant with security standards.",
-        },
-        {
-            "file_id": "DOC-006",
-            "file_name": "006_audit_logging.txt",
-            "content": (
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability. "
-                "All retrieval requests and relational hydration steps must generate immutable audit logs for traceability."
-            ),
-            "semantic_summary": "Audit trail requirements for AI retrieval pipelines.",
-            "grade": 8.2,
-            "comments": "Standardized across services.",
-        },
-        {
-            "file_id": "DOC-007",
-            "file_name": "007_adversarial_robustness.txt",
-            "content": (
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations. "
-                "Neural networks must incorporate adversarial training loops to resist gradient-based input perturbations."
-            ),
-            "semantic_summary": "Adversarial machine learning defense pipelines.",
-            "grade": 8.7,
-            "comments": "Under active evaluation.",
-        },
-        {
-            "file_id": "DOC-008",
-            "file_name": "008_federated_privacy.txt",
-            "content": (
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data. "
-                "Federated learning enables decentralized model updates without exposing raw institutional data."
-            ),
-            "semantic_summary": "Privacy-preserving model aggregation techniques.",
-            "grade": 9.4,
-            "comments": "Validated on medical datasets.",
-        },
-        {
-            "file_id": "DOC-009",
-            "file_name": "009_latency_benchmarks.txt",
-            "content": (
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups. "
-                "Network round-trips to relational databases introduce a measurable latency trade-off compared to in-memory lookups."
-            ),
-            "semantic_summary": "Query latency analysis for hybrid retrieval.",
-            "grade": 9.3,
-            "comments": "Optimizing connection pooling.",
-        },
-        {
-            "file_id": "DOC-010",
-            "file_name": "010_code_based_crypto.txt",
-            "content": (
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage. "
-                "Quasi-cyclic error-correcting codes provide post-quantum cryptographic resilience for secure record storage."
-            ),
-            "semantic_summary": "Code-based cryptosystems and error correction.",
-            "grade": 9.2,
-            "comments": "Reviewed by crypto team.",
-        },
-        {
-            "file_id": "DOC-011",
-            "file_name": "011_edge_ai_integration.txt",
-            "content": (
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints. "
-                "Edge AI devices require lightweight quantization to maintain real-time inference constraints."
-            ),
-            "semantic_summary": "Edge device quantization rules.",
-            "grade": 9.1,
-            "comments": "Approved for embedded deployment.",
-        },
-        {
-            "file_id": "DOC-012",
-            "file_name": "012_context_pruning.txt",
-            "content": (
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps. "
-                "Context window pruning algorithms eliminate redundant tokens prior to relational hydration steps."
-            ),
-            "semantic_summary": "Context pruning and token efficiency.",
-            "grade": 8.9,
-            "comments": "Needs benchmark validation.",
-        },
-        {
-            "file_id": "DOC-013",
-            "file_name": "013_distributed_caching.txt",
-            "content": (
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records. "
-                "Distributed Redis caching layers minimize database round-trip latency for frequently accessed records."
-            ),
-            "semantic_summary": "Redis caching for hybrid retrieval pipelines.",
-            "grade": 9.4,
-            "comments": "Production ready.",
-        },
-    ]
+    print(
+        "[2/3] Ingesting Records into Both Environments..."
+    )
+
+    rirag_system.ingest_from_database()
+
 
     print("[2/3] Ingesting Records into Both Environments...")
-    for rec in records:
-        # Ingest into RI-RAG (MySQL + ChromaDB pointer)
-        rirag_system.ingest_hybrid_data(
-            rec["file_id"],
-            rec["file_name"],
-            rec["semantic_summary"],
-        )
+
     test_precision_recall_f1(rirag_system)
     test_evidence_grounding_and_contradiction(rirag_system)
     test_security_and_boundary_enforcement()

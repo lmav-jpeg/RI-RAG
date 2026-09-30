@@ -65,30 +65,36 @@ class HybridRIRAGSystem:
       )
     #print(f"[INFO] Successfully synced {len(rows)} records from MySQL to ChromaDB.")
 
-  def retrieve(self, query_text: str, n_results: int = 5):
-    """Scans vectors for similarity, extracts Primary Key (file_id),
-
-    then queries the MySQL relational database for complete authoritative truth.
+  def retrieve(self, query_texts: list, n_results: int = 1):
     """
-    query_embedding = self.embedding_model.encode(query_text).tolist()
+    Batches multiple queries into a single embedding and search pass
+    to reduce overhead and optimize retrieval latency.
+    """
+    # Encode all queries in one batch operation (faster than one-by-one)
+    query_embeddings = self.embedding_model.encode(query_texts).tolist()
+
+    # Query ChromaDB with multiple embeddings at once
     vector_results = self.collection.query(
-        query_embeddings=[query_embedding], n_results=n_results
+      query_embeddings=query_embeddings, n_results=n_results
     )
 
-    resolved_records = []
+    batch_resolved_records = []
 
-    if vector_results and vector_results["ids"] and vector_results["ids"][0]:
-      matched_ids = vector_results["ids"][0]
-      distances = vector_results["distances"][0]
+    if vector_results and vector_results["ids"]:
+      for i, matched_ids in enumerate(vector_results["ids"]):
+        resolved_records = []
+        distances = vector_results["distances"][0] if "distances" in vector_results else []
 
-      for file_id, distance in zip(matched_ids, distances):
-        # Follow Primary Key check to MySQL via DatabaseManager
-        row = self.db.fetch_by_id(file_id)
-        if row:
-          row["vector_distance"] = distance
-          resolved_records.append(row)
+        for j, file_id in enumerate(matched_ids):
+          # For RI-RAG, fetch from MySQL; for Standard RAG, extract from metadata/documents
+          row = self.db.fetch_by_id(file_id) if hasattr(self.db, "fetch_by_id") else {}
+          if row:
+            row["vector_distance"] = distances[j] if j < len(distances) else 0.0
+            resolved_records.append(row)
 
-    return resolved_records
+        batch_resolved_records.append(resolved_records)
+
+    return batch_resolved_records
 
 
 # --- Quick Test Execution ---
@@ -115,7 +121,7 @@ if __name__ == "__main__":
   results = system.retrieve(test_query, n_results=1)
 
   print("\n--- Retrieval Results ---")
-  for res in results:
+  for res in results[0]:
     print(f"Matched Primary Key : {res['file_id']}")
     print(f"File Name           : {res['file_name']}")
     print(f"Relational Grade    : {res['grade']}")

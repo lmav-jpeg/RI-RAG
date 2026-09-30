@@ -16,6 +16,7 @@ Standard RAG:
 import os
 import sys
 import time
+import multiprocessing as mp
 
 import chromadb
 import psutil
@@ -444,361 +445,776 @@ def calculate_statistics(values):
 # MAIN
 # ============================================================
 
-if __name__ == "__main__":
+# ============================================================
+# INDEPENDENT PROCESS BENCHMARK
+# ============================================================
 
-    print("=" * 75)
-    print("RI-RAG vs STANDARD RAG")
-    print("=" * 75)
+def run_rag_process(rag_type, result_queue):
+    """
+    Runs one complete RAG benchmark in an isolated process.
+
+    Each process owns:
+        - its own Python interpreter
+        - its own SentenceTransformer model
+        - its own Chroma client
+        - its own Chroma collection
+        - its own database connection
+
+    This prevents memory allocations from one RAG system
+    contaminating the measurement of the other system.
+    """
+
+    process = psutil.Process(os.getpid())
+
+    def rss_bytes():
+        return process.memory_info().rss
+
+    def rss_mb():
+        return rss_bytes() / (1024 * 1024)
+
+    print(
+        f"\n[{rag_type}] "
+        f"Starting isolated process "
+        f"(PID={os.getpid()})"
+    )
 
     # ========================================================
     # 1. DATABASE
     # ========================================================
 
-    print("\n[1/6] Connecting to MySQL...")
-
     db = DatabaseManager(DB_CONFIG)
 
     # ========================================================
-    # 2. INITIALIZE RI-RAG
+    # 2. INITIALIZE SYSTEM
     # ========================================================
 
-    print("[2/6] Initializing RI-RAG...")
+    if rag_type == "RI-RAG":
 
-    rirag_system = HybridRIRAGSystem(
-        db,
-        collection_name="ri_rag_store",
+        collection_name = (
+            f"ri_rag_eval_{os.getpid()}"
+        )
+
+        system = HybridRIRAGSystem(
+            db,
+            collection_name=collection_name,
+        )
+
+    elif rag_type == "STANDARD":
+
+        collection_name = (
+            f"standard_rag_eval_{os.getpid()}"
+        )
+
+        system = NormalRAGSystem(
+            db_manager=db,
+            collection_name=collection_name,
+        )
+
+    else:
+        raise ValueError(
+            f"Unknown RAG type: {rag_type}"
+        )
+
+    # ========================================================
+    # 3. LOAD DATABASE DATA
+    # ========================================================
+
+    connection = db._get_connection()
+
+    cursor = connection.cursor(
+        dictionary=True
     )
 
-    # ========================================================
-    # 3. INITIALIZE STANDARD RAG
-    # ========================================================
-
-    print("[3/6] Initializing Standard RAG...")
-
-    normal_rag = NormalRAGSystem(
-        db_manager=db,
-        collection_name=STANDARD_COLLECTION_NAME,
+    cursor.execute(
+        """
+        SELECT
+            file_id,
+            file_name,
+            content,
+            semantic_summary,
+            grade,
+            comments
+        FROM file
+        """
     )
 
-    # ========================================================
-    # 4. INGESTION
-    # ========================================================
+    rows = cursor.fetchall()
 
-    print("\n[4/6] Synchronizing both systems from MySQL...")
-
-    # Each system is ingested exactly once.
-
-    rss_before_rirag = get_rss_bytes()
-
-    rirag_system.ingest_from_database()
-
-    rss_after_rirag = get_rss_bytes()
-
-    rss_before_standard = get_rss_bytes()
-
-    normal_rag.ingest_from_database()
-
-    rss_after_standard = get_rss_bytes()
+    cursor.close()
+    connection.close()
 
     print(
-        f"\nRI-RAG ingestion RSS delta: "
-        f"{(rss_after_rirag - rss_before_rirag) / (1024 * 1024):.2f} MB"
+        f"[{rag_type}] "
+        f"Loaded {len(rows)} records."
+    )
+
+    # ========================================================
+    # 4. INGESTION MEMORY BENCHMARK
+    # ========================================================
+
+    baseline_rss = rss_bytes()
+    peak_rss = baseline_rss
+
+    print(
+        f"[{rag_type}] "
+        f"Baseline RSS: "
+        f"{baseline_rss / (1024 * 1024):.2f} MB"
+    )
+
+    # --------------------------------------------------------
+    # RI-RAG
+    # --------------------------------------------------------
+
+    if rag_type == "RI-RAG":
+
+        for row in rows:
+
+            system.ingest_hybrid_data(
+                file_id=row["file_id"],
+                file_name=row["file_name"],
+                semantic_summary=row["semantic_summary"],
+            )
+
+            current_rss = rss_bytes()
+
+            if current_rss > peak_rss:
+                peak_rss = current_rss
+
+    # --------------------------------------------------------
+    # STANDARD RAG
+    # --------------------------------------------------------
+
+    else:
+
+        for row in rows:
+
+            system.ingest_document(
+                file_id=row["file_id"],
+                file_name=row["file_name"],
+                content=row["content"],
+                semantic_summary=row["semantic_summary"],
+                grade=row["grade"],
+                comments=row["comments"],
+            )
+
+            current_rss = rss_bytes()
+
+            if current_rss > peak_rss:
+                peak_rss = current_rss
+
+    final_rss = rss_bytes()
+
+    # ========================================================
+    # 5. MEMORY RESULTS
+    # ========================================================
+
+    peak_increase_mb = (
+        peak_rss - baseline_rss
+    ) / (1024 * 1024)
+
+    final_increase_mb = (
+        final_rss - baseline_rss
+    ) / (1024 * 1024)
+
+    print(
+        f"[{rag_type}] "
+        f"Peak RSS: "
+        f"{peak_rss / (1024 * 1024):.2f} MB"
     )
 
     print(
-        f"Standard RAG ingestion RSS delta: "
-        f"{(rss_after_standard - rss_before_standard) / (1024 * 1024):.2f} MB"
+        f"[{rag_type}] "
+        f"Peak increase: "
+        f"{peak_increase_mb:.2f} MB"
     )
 
     # ========================================================
-    # 5. QUERY COMPARISON
+    # 6. RETRIEVAL TEST
     # ========================================================
 
-    print("\n[5/6] Running retrieval comparison...")
+    print(
+        f"[{rag_type}] "
+        f"Running retrieval queries..."
+    )
 
-    print("=" * 75)
+    retrieval_results = []
 
     for i, query in enumerate(
         TEST_QUERIES,
         start=1,
     ):
 
+        start = time.perf_counter()
+
+        results = system.retrieve(
+            query,
+            n_results=1,
+        )
+
+        elapsed_ms = (
+            time.perf_counter()
+            - start
+        ) * 1000
+
+        if results:
+
+            if rag_type == "RI-RAG":
+
+                # RI-RAG returns:
+                # [
+                #   [
+                #       record
+                #   ]
+                # ]
+
+                if (
+                    isinstance(results, list)
+                    and results
+                    and isinstance(results[0], list)
+                ):
+                    result = (
+                        results[0][0]
+                        if results[0]
+                        else None
+                    )
+                else:
+                    result = None
+
+            else:
+
+                # Standard RAG returns:
+                # [
+                #   record
+                # ]
+
+                result = results[0]
+
+        else:
+            result = None
+
+        retrieval_results.append(
+            {
+                "query": query,
+                "latency_ms": elapsed_ms,
+                "result": result,
+            }
+        )
+
         print(
-            f"\nQuery {i}: {query}"
+            f"[{rag_type}] "
+            f"Query {i}: "
+            f"{elapsed_ms:.2f} ms"
         )
-
-        # ----------------------------------------------------
-        # RI-RAG
-        # ----------------------------------------------------
-
-        rirag_results, rirag_latency = (
-            measure_retrieval(
-                rirag_system,
-                query,
-                n_results=1,
-            )
-        )
-
-        print("\n--- RI-RAG ---")
-
-        if rirag_results:
-
-            result = rirag_results[0]
-
-            print(
-                f"Matched Primary Key : "
-                f"{result['file_id']}"
-            )
-
-            print(
-                f"File Name           : "
-                f"{result['file_name']}"
-            )
-
-            print(
-                f"MySQL Grade         : "
-                f"{result['grade']}"
-            )
-
-            print(
-                f"MySQL Comments      : "
-                f"{result['comments']}"
-            )
-
-            print(
-                f"Authoritative Text  : "
-                f"{result['content']}"
-            )
-
-            print(
-                f"Vector Distance     : "
-                f"{result['vector_distance']:.4f}"
-            )
-
-            print(
-                f"Total Retrieval     : "
-                f"{rirag_latency:.2f} ms"
-            )
-
-        else:
-
-            print("No RI-RAG result.")
-
-        # ----------------------------------------------------
-        # STANDARD RAG
-        # ----------------------------------------------------
-
-        normal_results, normal_latency = (
-            measure_retrieval(
-                normal_rag,
-                query,
-                n_results=1,
-            )
-        )
-
-        print("\n--- STANDARD RAG ---")
-
-        if normal_results:
-
-            result = normal_results[0]
-
-            print(
-                f"Matched Document ID : "
-                f"{result['file_id']}"
-            )
-
-            print(
-                f"File Name           : "
-                f"{result['file_name']}"
-            )
-
-            print(
-                f"Vector Store Grade  : "
-                f"{result['grade']}"
-            )
-
-            print(
-                f"Vector Store Comments: "
-                f"{result['comments']}"
-            )
-
-            print(
-                f"Retrieved Text      : "
-                f"{result['content']}"
-            )
-
-            print(
-                f"Vector Distance     : "
-                f"{result['vector_distance']:.4f}"
-            )
-
-            print(
-                f"Total Retrieval     : "
-                f"{normal_latency:.2f} ms"
-            )
-
-        else:
-
-            print("No Standard RAG result.")
 
     # ========================================================
-    # 6. VECTOR STORE SIZE
+    # 7. BATCH RETRIEVAL
     # ========================================================
 
-    print("\n" + "=" * 75)
-    print("VECTOR STORE REPRESENTATION SIZE")
-    print("=" * 75)
+    batch_latency_ms = None
 
-    normal_size = (
+    if rag_type == "RI-RAG":
+
+        print(
+            f"[{rag_type}] "
+            f"Running batched retrieval..."
+        )
+
+        start = time.perf_counter()
+
+        batch_results = system.retrieve(
+            TEST_QUERIES,
+            n_results=1,
+        )
+
+        batch_latency_ms = (
+            time.perf_counter()
+            - start
+        ) * 1000
+
+        print(
+            f"[{rag_type}] "
+            f"Batch latency for "
+            f"{len(TEST_QUERIES)} queries: "
+            f"{batch_latency_ms:.2f} ms"
+        )
+
+    # ========================================================
+    # 8. MATERIALIZED CHROMA REPRESENTATION
+    # ========================================================
+
+    print(
+        f"[{rag_type}] "
+        f"Measuring Chroma representation..."
+    )
+
+    vector_store_size = (
         measure_vector_store_size(
-            normal_rag.collection
+            system.collection
         )
     )
 
-    rirag_size = (
-        measure_vector_store_size(
-            rirag_system.collection
+    print(
+        f"[{rag_type}] "
+        f"Materialized Chroma representation: "
+        f"{vector_store_size:,} bytes"
+    )
+
+    # ========================================================
+    # 9. REPEATED RETRIEVAL BENCHMARK
+    # ========================================================
+
+    print(
+        f"[{rag_type}] "
+        f"Running repeated retrieval benchmark..."
+    )
+
+    latencies = benchmark_latency(
+        system,
+        TEST_QUERIES,
+        repetitions=10,
+    )
+
+    statistics = calculate_statistics(
+        latencies
+    )
+
+    print(
+        f"[{rag_type}] "
+        f"Mean latency: "
+        f"{statistics['mean']:.2f} ms"
+    )
+
+    # ========================================================
+    # 10. RETURN RESULTS
+    # ========================================================
+
+    result_queue.put(
+        {
+            "rag_type": rag_type,
+
+            "pid": os.getpid(),
+
+            "records": len(rows),
+
+            "baseline_rss_mb": (
+                baseline_rss
+                / (1024 * 1024)
+            ),
+
+            "peak_rss_mb": (
+                peak_rss
+                / (1024 * 1024)
+            ),
+
+            "final_rss_mb": (
+                final_rss
+                / (1024 * 1024)
+            ),
+
+            "peak_increase_mb": (
+                peak_increase_mb
+            ),
+
+            "final_increase_mb": (
+                final_increase_mb
+            ),
+
+            "vector_store_size_bytes": (
+                vector_store_size
+            ),
+
+            "retrieval_results": (
+                retrieval_results
+            ),
+
+            "batch_latency_ms": (
+                batch_latency_ms
+            ),
+
+            "latency_statistics": (
+                statistics
+            ),
+        }
+    )
+
+    print(
+        f"[{rag_type}] "
+        f"Benchmark complete."
+    )
+
+
+# ============================================================
+# RUN ONE PROCESS AT A TIME
+# ============================================================
+
+def run_isolated_benchmark(rag_type):
+    """
+    Start one RAG benchmark in a completely separate process.
+
+    The process is terminated after the benchmark, ensuring
+    the next benchmark starts with a clean Python process.
+    """
+
+    result_queue = mp.Queue()
+
+    process = mp.Process(
+        target=run_rag_process,
+        args=(
+            rag_type,
+            result_queue,
+        ),
+    )
+
+    process.start()
+
+    process.join()
+
+    if process.exitcode != 0:
+
+        raise RuntimeError(
+            f"{rag_type} benchmark process "
+            f"failed with exit code "
+            f"{process.exitcode}"
         )
+
+    if result_queue.empty():
+
+        raise RuntimeError(
+            f"{rag_type} benchmark "
+            f"returned no results."
+        )
+
+    return result_queue.get()
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    # Required on Windows.
+    mp.freeze_support()
+
+    print("=" * 75)
+    print("RI-RAG vs STANDARD RAG")
+    print("ISOLATED PROCESS BENCHMARK")
+    print("=" * 75)
+
+    print(
+        "\nEach system will run in its own "
+        "independent Python process."
+    )
+
+    # ========================================================
+    # STANDARD RAG PROCESS
+    # ========================================================
+
+    print("\n" + "=" * 75)
+    print("PROCESS 1: STANDARD RAG")
+    print("=" * 75)
+
+    standard_results = (
+        run_isolated_benchmark(
+            "STANDARD"
+        )
+    )
+
+    # ========================================================
+    # RI-RAG PROCESS
+    # ========================================================
+
+    print("\n" + "=" * 75)
+    print("PROCESS 2: RI-RAG")
+    print("=" * 75)
+
+    rirag_results = (
+        run_isolated_benchmark(
+            "RI-RAG"
+        )
+    )
+
+    # ========================================================
+    # FINAL COMPARISON
+    # ========================================================
+
+    print("\n" + "=" * 75)
+    print("FINAL COMPARISON")
+    print("=" * 75)
+
+    # --------------------------------------------------------
+    # MEMORY
+    # --------------------------------------------------------
+
+    print("\nMEMORY")
+
+    print(
+        f"\nStandard RAG:"
+        f"\n  Baseline RSS       : "
+        f"{standard_results['baseline_rss_mb']:.2f} MB"
+        f"\n  Peak RSS           : "
+        f"{standard_results['peak_rss_mb']:.2f} MB"
+        f"\n  Peak increase      : "
+        f"{standard_results['peak_increase_mb']:.2f} MB"
+    )
+
+    print(
+        f"\nRI-RAG:"
+        f"\n  Baseline RSS       : "
+        f"{rirag_results['baseline_rss_mb']:.2f} MB"
+        f"\n  Peak RSS           : "
+        f"{rirag_results['peak_rss_mb']:.2f} MB"
+        f"\n  Peak increase      : "
+        f"{rirag_results['peak_increase_mb']:.2f} MB"
+    )
+
+    standard_peak = (
+        standard_results["peak_increase_mb"]
+    )
+
+    rirag_peak = (
+        rirag_results["peak_increase_mb"]
+    )
+
+    if standard_peak > 0:
+
+        memory_difference = (
+            (
+                standard_peak
+                - rirag_peak
+            )
+            / standard_peak
+        ) * 100
+
+        print(
+            f"\nRI-RAG peak RSS difference "
+            f"relative to Standard RAG: "
+            f"{memory_difference:.2f}%"
+        )
+
+    # --------------------------------------------------------
+    # VECTOR REPRESENTATION
+    # --------------------------------------------------------
+
+    print("\n" + "-" * 75)
+    print("MATERIALIZED CHROMA REPRESENTATION")
+    print("-" * 75)
+
+    standard_size = (
+        standard_results[
+            "vector_store_size_bytes"
+        ]
+    )
+
+    rirag_size = (
+        rirag_results[
+            "vector_store_size_bytes"
+        ]
     )
 
     print(
         f"Standard RAG : "
-        f"{normal_size:,} bytes "
-        f"({normal_size / 1024:.2f} KB)"
+        f"{standard_size:,} bytes "
+        f"({standard_size / 1024:.2f} KB)"
     )
 
     print(
-        f"RI-RAG      : "
+        f"RI-RAG       : "
         f"{rirag_size:,} bytes "
         f"({rirag_size / 1024:.2f} KB)"
     )
 
-    if normal_size > 0:
+    if standard_size > 0:
 
-        reduction = (
-            (normal_size - rirag_size)
-            / normal_size
+        vector_reduction = (
+            (
+                standard_size
+                - rirag_size
+            )
+            / standard_size
         ) * 100
 
         print(
-            f"\nRI-RAG materialized vector "
-            f"representation reduction: "
-            f"{reduction:.2f}%"
+            f"\nRI-RAG materialized "
+            f"representation difference: "
+            f"{vector_reduction:.2f}%"
         )
 
-    # ========================================================
-    # REPEATED LATENCY
-    # ========================================================
+    # --------------------------------------------------------
+    # LATENCY
+    # --------------------------------------------------------
 
-    print("\n" + "=" * 75)
-    print("REPEATED QUERY PERFORMANCE")
-    print("=" * 75)
+    print("\n" + "-" * 75)
+    print("REPEATED RETRIEVAL LATENCY")
+    print("-" * 75)
 
-    rirag_latencies = benchmark_latency(
-        rirag_system,
-        TEST_QUERIES,
-        repetitions=10,
+    standard_stats = (
+        standard_results[
+            "latency_statistics"
+        ]
     )
 
-    normal_latencies = benchmark_latency(
-        normal_rag,
-        TEST_QUERIES,
-        repetitions=10,
-    )
-
-    rirag_stats = calculate_statistics(
-        rirag_latencies
-    )
-
-    normal_stats = calculate_statistics(
-        normal_latencies
+    rirag_stats = (
+        rirag_results[
+            "latency_statistics"
+        ]
     )
 
     print(
-        f"Standard RAG mean: "
-        f"{normal_stats['mean']:.2f} ms"
+        f"\nStandard RAG:"
+        f"\n  Mean : "
+        f"{standard_stats['mean']:.2f} ms"
+        f"\n  Min  : "
+        f"{standard_stats['min']:.2f} ms"
+        f"\n  Max  : "
+        f"{standard_stats['max']:.2f} ms"
     )
 
     print(
-        f"RI-RAG mean     : "
+        f"\nRI-RAG:"
+        f"\n  Mean : "
         f"{rirag_stats['mean']:.2f} ms"
-    )
-
-    print(
-        f"\nStandard RAG min: "
-        f"{normal_stats['min']:.2f} ms"
-    )
-
-    print(
-        f"Standard RAG max: "
-        f"{normal_stats['max']:.2f} ms"
-    )
-
-    print(
-        f"RI-RAG min     : "
+        f"\n  Min  : "
         f"{rirag_stats['min']:.2f} ms"
-    )
-
-    print(
-        f"RI-RAG max     : "
+        f"\n  Max  : "
         f"{rirag_stats['max']:.2f} ms"
     )
 
+    # --------------------------------------------------------
+    # BATCH
+    # --------------------------------------------------------
+
+    if (
+        rirag_results["batch_latency_ms"]
+        is not None
+    ):
+
+        print("\n" + "-" * 75)
+        print("RI-RAG BATCH RETRIEVAL")
+        print("-" * 75)
+
+        print(
+            f"Queries: "
+            f"{len(TEST_QUERIES)}"
+        )
+
+        print(
+            f"Total batch latency: "
+            f"{rirag_results['batch_latency_ms']:.2f} ms"
+        )
+
+    # --------------------------------------------------------
+    # RETRIEVAL RESULTS
+    # --------------------------------------------------------
+
+    print("\n" + "-" * 75)
+    print("RETRIEVAL RESULTS")
+    print("-" * 75)
+
+    for i in range(
+        len(TEST_QUERIES)
+    ):
+
+        query = TEST_QUERIES[i]
+
+        standard_item = (
+            standard_results[
+                "retrieval_results"
+            ][i]
+        )
+
+        rirag_item = (
+            rirag_results[
+                "retrieval_results"
+            ][i]
+        )
+
+        print(
+            f"\nQuery {i + 1}: "
+            f"{query}"
+        )
+
+        print(
+            f"  Standard RAG:"
+            f" "
+            f"{standard_item['latency_ms']:.2f} ms"
+        )
+
+        if standard_item["result"]:
+
+            print(
+                f"    ID: "
+                f"{standard_item['result']['file_id']}"
+            )
+
+        else:
+
+            print(
+                "    No result."
+            )
+
+        print(
+            f"  RI-RAG:"
+            f" "
+            f"{rirag_item['latency_ms']:.2f} ms"
+        )
+
+        if rirag_item["result"]:
+
+            print(
+                f"    ID: "
+                f"{rirag_item['result']['file_id']}"
+            )
+
+        else:
+
+            print(
+                "    No result."
+            )
+
     # ========================================================
-    # FINAL SUMMARY
+    # INTERPRETATION
     # ========================================================
 
     print("\n" + "=" * 75)
-    print("FINAL SUMMARY")
+    print("BENCHMARK INTERPRETATION")
     print("=" * 75)
 
-    if normal_size > 0:
-
-        reduction = (
-            (normal_size - rirag_size)
-            / normal_size
-        ) * 100
-
-        print(
-            f"Vector representation reduction: "
-            f"{reduction:.2f}%"
-        )
-
     print(
-        f"Standard RAG average latency: "
-        f"{normal_stats['mean']:.2f} ms"
-    )
-
-    print(
-        f"RI-RAG average latency: "
-        f"{rirag_stats['mean']:.2f} ms"
-    )
-
-    print("\nInterpretation:")
-
-    print(
-        "1. Standard RAG stores the full payload "
+        "\n1. Standard RAG stores full content "
         "inside Chroma."
     )
 
     print(
-        "2. RI-RAG stores only the semantic summary "
-        "and primary-key relationship in Chroma."
+        "2. RI-RAG stores the semantic summary "
+        "and file_id in Chroma."
     )
 
     print(
-        "3. RI-RAG resolves the primary key through "
-        "MySQL to obtain authoritative content."
+        "3. RI-RAG retrieves authoritative "
+        "content and metadata from MySQL."
     )
 
     print(
-        "4. The vector-size comparison measures the "
-        "materialized representation returned by Chroma."
+        "4. Peak RSS is measured independently "
+        "inside each process."
     )
 
     print(
-        "5. The RI-RAG retrieval latency includes "
-        "the relational hydration step."
+        "5. Chroma representation size is "
+        "measured while the collection actually "
+        "contains the benchmark dataset."
+    )
+
+    print(
+        "6. RI-RAG retrieval latency includes "
+        "the MySQL hydration step."
+    )
+
+    print(
+        "\nIMPORTANT: these measurements should "
+        "be repeated across larger datasets "
+        "before making scalability claims."
     )
 
     print("\n" + "=" * 75)

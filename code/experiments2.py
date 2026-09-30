@@ -8,7 +8,7 @@ import statistics
 import time
 from database import DatabaseManager
 from rirag import HybridRIRAGSystem  # Assuming your system class is imported here
-from riragversusrag import NormalRAGSystem
+from Experiment3 import NormalRAGSystem
 
 
 def test_ri_rag_latency_statistics():

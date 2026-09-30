@@ -6,7 +6,7 @@ Tests and stressing Round 2
 '''
 import time
 import mysql.connector
-from riragversusrag import *
+from Experiment3 import *
 
 
 
